@@ -1,0 +1,58 @@
+
+void callback(int fd, uint32_t events)
+{
+    // 处理事件
+}
+
+// 将fd添加到epoll实例中，并设置回调函数
+struct epoll_event ev;
+ev.events   = EPOLLIN | EPOLLET;
+ev.data.fd  = fd;
+ev.data.ptr = callback;
+epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+
+// 等待事件
+struct epoll_event events[MAX_EVENTS];
+int                nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+for (int i = 0; i < nfds; i++) {
+    // 调用回调函数
+    void (*cb)(int, uint32_t) = (void (*)(int, uint32_t))events[i].data.ptr;
+    cb(events[i].data.fd, events[i].events);
+}
+
+/**************************************************************************************/
+
+// libserial还提供了epoll()函数用于检查串口是否可读。使用epoll()函数的步骤如下：
+
+// 创建一个epoll实例。可以使用如下代码：
+#include <sys/epoll.h>
+
+int epoll_fd = epoll_create(1);
+if (epoll_fd == -1) {
+    // 出错处理
+}
+// 将串口文件描述符添加到epoll实例中。可以使用如下代码：
+epoll_event event;
+event.events  = EPOLLIN;
+event.data.fd = serial_port.fd();
+if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, serial_port.fd(), &event) == -1) {
+    // 出错处理
+}
+// 其中，serial_port是一个SerialStream对象，fd()方法可以获取该串口的文件描述符。events字段表示等待的事件，EPOLLIN表示可读事件。
+
+// 调用epoll_wait()函数等待事件。可以使用如下代码：
+epoll_event events[1];
+int         ret = epoll_wait(epoll_fd, events, 1, timeout);
+if (ret == -1) {
+    // 出错处理
+} else if (ret == 0) {
+    // 超时处理
+} else {
+    // 读取数据
+    char buf[1024];
+    int  len = serial_port.readBytes(buf, sizeof(buf));
+    // 处理读取的数据
+}
+// 其中，timeout表示等待时间，单位是毫秒。如果文件描述符可读，则epoll_wait()函数返回大于0的值。如果等待时间超时，则返回0。如果出现错误，则返回-1，并设置errno变量。在上面的代码中，使用readBytes()方法读取数据，并处理读取的数据。
+
+// 需要注意的是，epoll()函数需要在Linux系统中使用，而在Windows系统中则不可用。此外，使用epoll()函数需要在编译时加上-lrt参数。
