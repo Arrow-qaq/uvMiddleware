@@ -4,12 +4,14 @@
  * @Author: Arrow
  * @Date: 2023-03-29 09:13:42
  * @LastEditors: Arrow
- * @LastEditTime: 2023-03-29 15:52:06
+ * @LastEditTime: 2023-03-29 16:20:51
  */
-#include <uv.h>
+
 #include <functional>
 #include <list>
-using readCallBack = std::function< void(const char*, ssize_t) >;
+#include <uv.h>
+
+using readCallBack = std::function< void(std::string data) >;
 
 class Server
 {
@@ -52,13 +54,13 @@ private:
         auto self = static_cast< Server* >(server->data);
         if (status == 0)
         {
-            auto client   = std::make_shared< uv_tcp_t >();
-            auto callback = new std::function< void(char*, ssize_t) >(self->readCallBack_);
-            client->data  = callback;
+            auto client = std::make_shared< uv_tcp_t >();
 
             uv_tcp_init(self->loop, client.get());
             if (uv_accept(server, (uv_stream_t*)client.get()) == 0)
             {
+                auto callback = new readCallBack(self->readCallBack_);
+                client->data  = callback;
                 uv_read_start((uv_stream_t*)client.get(), on_alloc_cb, on_read_cb);
                 self->listClient.emplace_back(client);
             } else
@@ -76,9 +78,8 @@ private:
 
     static void on_read_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     {
-        auto callback = reinterpret_cast< std::function< void(char*, ssize_t) >* >(stream->data);
-        (*callback)(buf->base, nread);
-        delete callback;
+        auto callback = reinterpret_cast< readCallBack* >(stream->data);
+        (*callback)(std::string(buf->base, nread));
     }
 
     static void OnWrite(uv_write_t* req, int status)
