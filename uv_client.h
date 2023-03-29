@@ -4,11 +4,13 @@
  * @Author: Arrow
  * @Date: 2023-03-29 09:13:42
  * @LastEditors: Arrow
- * @LastEditTime: 2023-03-29 15:55:10
+ * @LastEditTime: 2023-03-29 16:21:16
  */
 #include <iostream>
 #include <string>
+#include <functional>
 #include <uv.h>
+using readCallBack = std::function< void(std::string data) >;
 
 class Client
 {
@@ -19,8 +21,9 @@ public:
         socket_->data = this;
     }
 
-    void Connect(const std::string& host, int port)
+    void Connect(const std::string& host, int port, readCallBack lambda_callback)
     {
+        readCallBack_ = lambda_callback;
         struct sockaddr_in addr;
         uv_ip4_addr(host.c_str(), port, &addr);
 
@@ -86,6 +89,8 @@ private:
         {
             std::string data(buf->base, nread);
             std::cout << "Received data: " << data << std::endl;
+            auto callback = reinterpret_cast< readCallBack* >(stream->data);
+            (*callback)(std::string(buf->base, nread));
         }
 
         delete[] buf->base;
@@ -95,6 +100,7 @@ private:
     {
         // TODO: handle connection
         // Start reading from socket
+
         uv_read_start(reinterpret_cast< uv_stream_t* >(socket_), OnAlloc, OnRead);
     }
 
@@ -104,6 +110,8 @@ private:
         buf->len  = suggested_size;
     }
 
-    uv_loop_t* loop_;
-    uv_tcp_t*  socket_;
+private:
+    readCallBack readCallBack_;
+    uv_loop_t*   loop_;
+    uv_tcp_t*    socket_;
 };
