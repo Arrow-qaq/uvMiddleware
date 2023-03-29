@@ -1,68 +1,64 @@
 #include <uv.h>
-#include <iostream>
-#include <memory>
+#include <functional>
 
-class TcpServer {
+using readCallBack = std::function< void(const char*, ssize_t) >;
+
+class Server
+{
 public:
-    TcpServer(uv_loop_t *loop)
+    Server(int port, uv_loop_t* loop_ = uv_default_loop()) : port(port), loop(loop_)
     {
-        uv_tcp_init(loop, &server_handle_);
-        read_req_ = std::make_unique< uv_read_t >();
+        uv_tcp_init(loop, &server);
+        uv_ip4_addr("0.0.0.0", port, &addr);
+        uv_tcp_bind(&server, (const struct sockaddr*)&addr, 0);
+        server.data = this;
     }
 
-    ~TcpServer() { uv_close((uv_handle_t *)&server_handle_, nullptr); }
-
-    void listen(int port, std::function< void() > on_listen)
+    void start(readCallBack lambda_callback)
     {
-        sockaddr_in addr = uv_ip4_addr("0.0.0.0", port);
-
-        uv_tcp_bind(&server_handle_, (const struct sockaddr *)&addr, 0);
-        uv_listen(
-            (uv_stream_t *)&server_handle_, 128, [on_listen](uv_stream_t *server, int status) {
-                if (status == -1) {
-                    std::cerr << "failed to listen" << std::endl;
-                } else {
-                    std::cout << "listening on port " << server->port << std::endl;
-                    on_listen();
-                }
-            });
+        readCallBack_ = lambda_callback;
+        uv_listen((uv_stream_t*)&server, SOMAXCONN, on_listen);
     }
 
-    void receive(uv_stream_t *client, std::function< void(const char *, ssize_t) > on_receive)
-    {
-        uv_read_start(
-            client,
-            [](uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
-                buf->base = new char[suggested_size];
-                buf->len  = suggested_size;
-            },
-            [on_receive](uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
-                if (nread == -1) {
-                    std::cerr << "failed to read data" << std::endl;
-                } else if (nread > 0) {
-                    std::cout << "received " << nread << " bytes of data" << std::endl;
-                    on_receive(buf->base, nread);
-                }
-                delete[] buf->base;
-            });
-    }
+    void stop() { uv_stop(loop); }
 
-    void send(uv_stream_t *client, const std::string &message, std::function< void() > on_send)
+private:
+    static void on_listen(uv_stream_t* stream, int status)
     {
-        auto write_req = std::make_unique< uv_write_t >();
-        auto buf       = uv_buf_init((char *)message.c_str(), message.length());
+        auto self = static_cast< Server* >(stream->data);
+        if (status == 0)
+        {
+            auto client   = new uv_tcp_t;
+            auto callback = new std::function< void(char*, ssize_t) >(self->readCallBack_);
+            client->data  = callback;
 
-        uv_write(write_req.get(), client, &buf, 1, [on_send](uv_write_t *req, int status) {
-            if (status == -1) {
-                std::cerr << "failed to send message" << std::endl;
-            } else {
-                std::cout << "message sent successfully" << std::endl;
-                on_send();
+            uv_tcp_init(self->loop, client);
+            if (uv_accept(stream, (uv_stream_t*)client) == 0)
+            {
+                uv_read_start((uv_stream_t*)client, on_alloc_cb, on_read_cb);
+            } else
+            {
+                uv_close((uv_handle_t*)client, nullptr);
             }
-        });
+        }
+    }
+
+    static void on_alloc_cb(uv_handle_t* handle, size_t size, uv_buf_t* buf)
+    {
+        buf->base = new char[size];
+        buf->len  = size;
+    }
+
+    static void on_read_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
+    {
+        auto callback = reinterpret_cast< std::function< void(char*, ssize_t) >* >(stream->data);
+        (*callback)(buf->base, nread);
     }
 
 private:
-    uv_tcp_t                     server_handle_;
-    std::unique_ptr< uv_read_t > read_req_;
+    readCallBack       readCallBack_;
+    int                port;
+    uv_loop_t*         loop;
+    uv_tcp_t           server;
+    struct sockaddr_in addr;
 };
