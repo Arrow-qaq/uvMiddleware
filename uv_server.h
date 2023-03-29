@@ -1,6 +1,14 @@
+/*
+ * @Descripttion:
+ * @version:
+ * @Author: Arrow
+ * @Date: 2023-03-29 09:13:42
+ * @LastEditors: Arrow
+ * @LastEditTime: 2023-03-29 15:31:19
+ */
 #include <uv.h>
 #include <functional>
-
+#include <list>
 using readCallBack = std::function< void(const char*, ssize_t) >;
 
 class Server
@@ -12,6 +20,14 @@ public:
         uv_ip4_addr("0.0.0.0", port, &addr);
         uv_tcp_bind(&server, (const struct sockaddr*)&addr, 0);
         server.data = this;
+    }
+
+    ~Server()
+    {
+        for (auto client : listClient)
+        {
+            uv_close((uv_handle_t*)client, nullptr);
+        }
     }
 
     void start(readCallBack lambda_callback)
@@ -28,7 +44,8 @@ private:
         auto self = static_cast< Server* >(stream->data);
         if (status == 0)
         {
-            auto client   = new uv_tcp_t;
+            auto client = new uv_tcp_t;
+
             auto callback = new std::function< void(char*, ssize_t) >(self->readCallBack_);
             client->data  = callback;
 
@@ -36,6 +53,7 @@ private:
             if (uv_accept(stream, (uv_stream_t*)client) == 0)
             {
                 uv_read_start((uv_stream_t*)client, on_alloc_cb, on_read_cb);
+                self->listClient.emplace_back(client);
             } else
             {
                 uv_close((uv_handle_t*)client, nullptr);
@@ -56,9 +74,10 @@ private:
     }
 
 private:
-    readCallBack       readCallBack_;
-    int                port;
-    uv_loop_t*         loop;
-    uv_tcp_t           server;
-    struct sockaddr_in addr;
+    readCallBack           readCallBack_;
+    int                    port;
+    uv_loop_t*             loop;
+    uv_tcp_t               server;
+    std::list< uv_tcp_t* > listClient;
+    struct sockaddr_in     addr;
 };
