@@ -4,7 +4,7 @@
  * @Author: Arrow
  * @Date: 2023-03-29 09:13:42
  * @LastEditors: Arrow
- * @LastEditTime: 2023-03-29 16:20:51
+ * @LastEditTime: 2023-03-29 16:31:53
  */
 
 #include <functional>
@@ -28,7 +28,8 @@ public:
     {
         for (auto client : listClient)
         {
-            uv_close((uv_handle_t*)client.get(), nullptr);
+            if (uv_is_active((uv_handle_t*)client.get()))
+                uv_close((uv_handle_t*)client.get(), nullptr);
         }
     }
 
@@ -78,8 +79,23 @@ private:
 
     static void on_read_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     {
-        auto callback = reinterpret_cast< readCallBack* >(stream->data);
-        (*callback)(std::string(buf->base, nread));
+        if (nread < 0)
+        {
+            if (nread != UV_EOF)
+            {
+                std::cerr << "Read error: " << uv_strerror(nread) << std::endl;
+            }
+            uv_close(reinterpret_cast< uv_handle_t* >(stream), nullptr);
+            delete[] buf->base;
+            return;
+        }
+
+        if (nread > 0)
+        {
+            auto callback = reinterpret_cast< readCallBack* >(stream->data);
+            (*callback)(std::string(buf->base, nread));
+        }
+        delete[] buf->base;
     }
 
     static void OnWrite(uv_write_t* req, int status)
