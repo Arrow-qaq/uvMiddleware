@@ -1,16 +1,20 @@
+
+
 /*
- * @Descripttion: this is test
+ * @Descripttion: ${fileheader.belle}
  * @version:
  * @Author: Arrow
  * @Date: 2023-03-29 09:13:42
  * @LastEditors: Arrow
- * @LastEditTime: 2023-03-29 16:21:16
+ * @LastEditTime: 2023-03-29 17:16:06
  */
+
 #include <iostream>
 #include <string>
 #include <functional>
 #include <uv.h>
-using readCallBack = std::function< void(std::string data) >;
+using readCallBack  = std::function< void(std::string data) >;
+using writeCallBack = std::function< void(int) >;
 
 class Client
 {
@@ -21,22 +25,26 @@ public:
         socket_->data = this;
     }
 
-    void Connect(const std::string& host, int port, readCallBack lambda_callback)
+    void Connect(const std::string& host, int port, readCallBack read_callback,
+                 writeCallBack write_callback = nullptr)
     {
-        readCallBack_ = lambda_callback;
+        readCallBack_  = read_callback;
+        writeCallBack_ = write_callback;
         struct sockaddr_in addr;
         uv_ip4_addr(host.c_str(), port, &addr);
 
-        uv_connect_t* req = new uv_connect_t;
-        uv_tcp_connect(req, socket_, reinterpret_cast< const struct sockaddr* >(&addr), OnConnect);
+        uv_tcp_connect(&client_, socket_, reinterpret_cast< const struct sockaddr* >(&addr),
+                       OnConnect);
     }
 
     void Write(const std::string& data)
     {
         if (uv_is_writable(reinterpret_cast< uv_stream_t* >(socket_)))
         {
-            uv_buf_t    buf = uv_buf_init(const_cast< char* >(data.data()), data.size());
-            uv_write_t* req = new uv_write_t;
+            uv_buf_t    buf      = uv_buf_init(const_cast< char* >(data.data()), data.size());
+            uv_write_t* req      = new uv_write_t;
+            auto        callBack = new writeCallBack(writeCallBack_);
+            req->data            = callBack;
             uv_write(req, reinterpret_cast< uv_stream_t* >(socket_), &buf, 1, OnWrite);
         } else
         {
@@ -61,15 +69,18 @@ private:
 
     static void OnWrite(uv_write_t* req, int status)
     {
-        delete req;
-
         if (status < 0)
         {
             std::cerr << "Write error: " << uv_strerror(status) << std::endl;
+            delete req;
             return;
         }
 
+        auto callback = reinterpret_cast< writeCallBack* >(req->data);
+        (*callback)(status);
+
         std::cout << "Data written!" << std::endl;
+        delete req;
     }
 
     static void OnRead(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
@@ -111,7 +122,9 @@ private:
     }
 
 private:
-    readCallBack readCallBack_;
-    uv_loop_t*   loop_;
-    uv_tcp_t*    socket_;
+    readCallBack  readCallBack_;
+    writeCallBack writeCallBack_;
+    uv_connect_t  client_;
+    uv_loop_t*    loop_;
+    uv_tcp_t*     socket_;
 };
