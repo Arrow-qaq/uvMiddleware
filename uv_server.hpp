@@ -4,7 +4,7 @@
  * @Author: Arrow
  * @Date: 2023-03-29 09:13:42
  * @LastEditors: Arrow
- * @LastEditTime: 2023-03-30 09:51:31
+ * @LastEditTime: 2023-03-30 14:53:27
  * @Copyright: 2023 xxxTech CO.,LTD. All Rights Reserved.
  * @Descripttion:
  */
@@ -18,16 +18,21 @@ using readCallBack = std::function< void(std::string data) >;
 class Server
 {
 public:
-    Server(int port, uv_loop_t* loop_ = uv_default_loop()) : port_(port), loop(loop_)
+    Server(int port, uv_loop_t* loop = uv_default_loop())
+        : port_(port), loop_(loop), tcp_server_(new uv_tcp_t)
     {
-        uv_tcp_init(loop, &server);
+        uv_tcp_init(loop_, tcp_server_);
         uv_ip4_addr("0.0.0.0", port_, &addr);
-        uv_tcp_bind(&server, (const struct sockaddr*)&addr, 0);
-        server.data = this;
+        uv_tcp_bind(tcp_server_, (const struct sockaddr*)&addr, 0);
+        tcp_server_->data = this;
     }
 
     ~Server()
     {
+        if (uv_is_active((uv_handle_t*)tcp_server_))
+        {
+            uv_close((uv_handle_t*)tcp_server_, nullptr);
+        }
         for (auto client : listClient)
         {
             if (uv_is_active((uv_handle_t*)client.get()))
@@ -38,7 +43,7 @@ public:
     void start(readCallBack lambda_callback)
     {
         readCallBack_ = lambda_callback;
-        uv_listen((uv_stream_t*)&server, SOMAXCONN, on_listen);
+        uv_listen((uv_stream_t*)tcp_server_, SOMAXCONN, on_listen);
     }
 
     void Broadcast(const std::string& data)
@@ -49,7 +54,7 @@ public:
         }
     }
 
-    void stop() { uv_stop(loop); }
+    void stop() { uv_stop(loop_); }
 
 private:
     static void on_listen(uv_stream_t* server, int status)
@@ -59,7 +64,7 @@ private:
         {
             auto client = std::make_shared< uv_tcp_t >();
 
-            uv_tcp_init(self->loop, client.get());
+            uv_tcp_init(self->loop_, client.get());
             if (uv_accept(server, (uv_stream_t*)client.get()) == 0)
             {
                 auto callback = new readCallBack(self->readCallBack_);
@@ -105,30 +110,50 @@ private:
         if (status < 0)
         {
             std::cerr << "Write error: " << uv_strerror(status) << std::endl;
+            delete req;
             return;
         }
 
         std::cout << "Data written!" << std::endl;
+        delete req;
     }
 
     void Write(std::shared_ptr< uv_tcp_t > client, const std::string& data)
     {
         if (uv_is_writable(reinterpret_cast< uv_stream_t* >(client.get())))
         {
-            uv_buf_t    buf = uv_buf_init(const_cast< char* >(data.data()), data.size());
+            client->data = new std::string(data);
+
             uv_write_t* req = new uv_write_t;
-            uv_write(req, reinterpret_cast< uv_stream_t* >(client.get()), &buf, 1, OnWrite);
-        } else
-        {
-            std::cerr << "Socket is not writable" << std::endl;
+            req->data       = client.get();
+
+            // 创建异步句柄对象，并设置回调函数和回调数据
+            uv_async_t* async = new uv_async_t;
+            async->data       = req;
+            uv_async_init(loop_, async, onAsync);
+            uv_async_send(async);
         }
+    }
+
+    static void onAsync(uv_async_t* handle)
+    {
+        // 获取写操作数据
+        auto req     = (uv_write_t*)handle->data;
+        auto pClient = (uv_stream_t*)req->data;
+        auto str     = (std::string*)pClient->data;
+        auto buf     = uv_buf_init(str->data(), str->size());
+
+        // 执行写操作
+        uv_write(req, pClient, &buf, 1, OnWrite);
+        delete handle;
+        delete str;
     }
 
 private:
     readCallBack                             readCallBack_;
     int                                      port_;
-    uv_loop_t*                               loop;
-    uv_tcp_t                                 server;
+    uv_loop_t*                               loop_;
+    uv_tcp_t*                                tcp_server_;
     std::list< std::shared_ptr< uv_tcp_t > > listClient;
     struct sockaddr_in                       addr;
 };
