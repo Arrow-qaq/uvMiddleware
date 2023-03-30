@@ -1,12 +1,10 @@
-
-
 /*
  * @Descripttion: ${fileheader.belle}
  * @version:
  * @Author: Arrow
  * @Date: 2023-03-29 09:13:42
  * @LastEditors: Arrow
- * @LastEditTime: 2023-03-30 09:33:19
+ * @LastEditTime: 2023-03-30 14:14:40
  */
 
 #include <iostream>
@@ -27,7 +25,7 @@ public:
 
     void Connect(const std::string& host, int port, readCallBack read_callback)
     {
-        readCallBack_ = read_callback;
+        readCB_ = read_callback;
         struct sockaddr_in addr;
         uv_ip4_addr(host.c_str(), port, &addr);
 
@@ -35,15 +33,22 @@ public:
                        OnConnect);
     }
 
-    void Write(const std::string& data, writeCallBack write_callback)
+    void Write(const std::string& data, writeCallBack write_cb)
     {
         if (uv_is_writable(reinterpret_cast< uv_stream_t* >(tcp_client_)))
         {
-            uv_buf_t    buf      = uv_buf_init(const_cast< char* >(data.data()), data.size());
-            uv_write_t* req      = new uv_write_t;
-            auto        callBack = new writeCallBack(write_callback);
-            req->data            = callBack;
-            uv_write(req, reinterpret_cast< uv_stream_t* >(tcp_client_), &buf, 1, OnWrite);
+            writeCB_        = write_cb;
+            buf_            = uv_buf_init(const_cast< char* >(data.data()), data.size());
+            uv_write_t* req = new uv_write_t;
+            req->data       = this;
+
+            // 创建异步句柄对象，并设置回调函数和回调数据
+            uv_async_t* async = new uv_async_t;
+            async->data       = req;
+            uv_async_init(loop_, async, onAsync);
+            uv_async_send(async);
+
+            // uv_write(req, reinterpret_cast< uv_stream_t* >(tcp_client_), &buf, 1, OnWrite);
         } else
         {
             std::cerr << "Socket is not writable" << std::endl;
@@ -69,8 +74,9 @@ private:
     {
         if (0 == status)
         {
-            auto callback = reinterpret_cast< writeCallBack* >(req->data);
-            (*callback)(0 == status);
+            auto pClient = reinterpret_cast< Client* >(req->data);
+            // auto callback = reinterpret_cast< writeCallBack* >(req->data);
+            (pClient->writeCB_)(0 == status);
 
             std::cout << "Data written!" << std::endl;
 
@@ -78,7 +84,6 @@ private:
         {
             std::cerr << "Write error: " << uv_strerror(status) << std::endl;
         }
-        delete req->data;
         delete req;
     }
 
@@ -99,8 +104,8 @@ private:
         {
             std::string data(buf->base, nread);
             std::cout << "Received data: " << data << std::endl;
-            auto callback = reinterpret_cast< readCallBack* >(stream->data);
-            (*callback)(std::string(buf->base, nread));
+            auto pClient = reinterpret_cast< Client* >(stream->data);
+            (pClient->readCB_)(std::string(buf->base, nread));
         }
 
         delete[] buf->base;
@@ -120,9 +125,23 @@ private:
         buf->len  = suggested_size;
     }
 
+    static void onAsync(uv_async_t* handle)
+    {
+        // 获取写操作数据
+        auto req     = (uv_write_t*)handle->data;
+        auto pClient = (Client*)req->data;
+        // 执行写操作
+        uv_write(req, reinterpret_cast< uv_stream_t* >(pClient->tcp_client_), &pClient->buf_, 1,
+                 OnWrite);
+        delete handle;
+        // uv_write(req, reinterpret_cast< uv_stream_t* >(tcp_client_), &buf, 1, OnWrite);
+    }
+
 private:
-    readCallBack readCallBack_;
-    uv_connect_t client_;
-    uv_loop_t*   loop_;
-    uv_tcp_t*    tcp_client_;
+    writeCallBack writeCB_;
+    readCallBack  readCB_;
+    uv_buf_t      buf_;
+    uv_connect_t  client_;
+    uv_loop_t*    loop_;
+    uv_tcp_t*     tcp_client_;
 };
