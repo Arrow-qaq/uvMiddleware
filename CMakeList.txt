@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.0.0)
+project(uv_client_server VERSION 0.1.0)
+
+include(CTest)
+enable_testing()
+
+set(CMAKE_CXX_STANDARD 17)
+add_definitions(-DNOMINMAX)
+add_definitions(-DDOCTEST_CONFIG_IMPLEMENT)
+
+include_directories(
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+add_executable(uv_client_server main.cpp uvServer.hpp uvClient.hpp)
+target_link_libraries(${PROJECT_NAME} uv)
+
+set(CPACK_PROJECT_NAME ${PROJECT_NAME})
+set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
+include(CPack)
+ 
